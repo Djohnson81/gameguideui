@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>GameGuide AI — Boss Assist MVP</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width:100%; height:100%; }
+  body {
+    font-family: 'Inter', sans-serif;
+    position: relative;
+    overflow: hidden;
+    background: #05060a;
+    height: 100vh;
+    min-height: 700px;
+  }
+
+  /* ---------- Boss image layer (crossfading states) ---------- */
+  .boss-layer { position:absolute; top:0; left:0; right:0; bottom:0; overflow:hidden; }
+  .boss-img { position:absolute; top:0; left:0; right:0; bottom:0; width:100%; height:100%; object-fit:cover; opacity:0; transition: opacity 1.1s ease; filter: brightness(0.78) saturate(1.05); }
+  .boss-img.active { opacity:1; }
+  .scrim { position:absolute; top:0; left:0; right:0; bottom:0; background: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,0.75) 100%); }
+  .vignette { position:absolute; top:0; left:0; right:0; bottom:0; box-shadow: inset 0 0 220px rgba(0,0,0,0.75); pointer-events:none; }
+
+  /* damage flash */
+  .flash { position:absolute; top:0; left:0; right:0; bottom:0; background:#ff5555; opacity:0; pointer-events:none; transition: opacity 0.08s ease; }
+  .flash.hit { opacity:0.28; }
+
+  /* ---------- Top bar ---------- */
+  .topbar { position:absolute; top:0; left:0; right:0; height:70px; display:flex; align-items:center; justify-content:space-between; padding:0 28px; z-index:5; }
+  .location { display:flex; align-items:center; gap:10px; background:rgba(10,10,12,0.75); border:1px solid #26261F; border-radius:6px; padding:8px 14px; }
+  .location .dot { width:7px; height:7px; border-radius:50%; background:#C6FF3D; }
+  .location .name { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:14px; color:#E8E8E6; }
+  .status { display:flex; align-items:center; gap:8px; background:rgba(10,10,12,0.75); border:1px solid #26261F; border-radius:6px; padding:8px 14px; color:#C6FF3D; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:12px; letter-spacing:0.5px; text-transform:uppercase; }
+  .status .pulse { width:7px; height:7px; border-radius:50%; background:#C6FF3D; box-shadow:0 0 8px #C6FF3D; animation: blink 1.6s infinite; }
+  @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+
+  /* ---------- Boss panel ---------- */
+  .boss-panel { position:absolute; left:28px; bottom:130px; width:340px; background:rgba(10,10,12,0.82); border:1px solid #26261F; border-radius:6px; padding:16px 20px; z-index:5; transition: border-color 0.4s ease; }
+  .boss-panel .label { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:10px; letter-spacing:1.5px; color:#9C9C9E; text-transform:uppercase; margin-bottom:4px; }
+  .boss-panel .name { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:20px; color:#E8E8E6; margin-bottom:4px; }
+  .boss-panel .state-tag { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:11px; letter-spacing:0.5px; margin-bottom:10px; display:inline-block; padding:2px 8px; border-radius:3px; }
+  .state-tag.idle { color:#C6FF3D; background:rgba(198,255,61,0.1); }
+  .state-tag.damaged { color:#ff9a4a; background:rgba(255,154,74,0.12); }
+  .state-tag.defeated { color:#ff5555; background:rgba(255,85,85,0.12); }
+  .bar-bg { height:5px; background:#26261F; border-radius:3px; overflow:hidden; }
+  .bar-fill.boss { width:100%; height:100%; background:linear-gradient(90deg,#ff6b4a,#ff3d3d); transition: width 0.5s ease; }
+
+  /* ---------- Assist panel ---------- */
+  .assist-panel { position:absolute; right:28px; top:96px; width:400px; max-width:92vw; background:#131316; border:1px solid #26261F; border-radius:8px; padding:20px; z-index:5; max-height:78vh; overflow-y:auto; }
+  .assist-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .assist-icon { width:36px; height:36px; border-radius:6px; background:#C6FF3D; display:flex; align-items:center; justify-content:center; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:17px; color:#0A0A0C; flex-shrink:0; }
+  .assist-title .brand { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:11px; letter-spacing:1.5px; color:#C6FF3D; text-transform:uppercase; }
+  .assist-title .headline { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:18px; color:#E8E8E6; margin-top:2px; }
+
+  .objective-box { background:#0E0E10; border:1px solid #26261F; border-left:3px solid #C6FF3D; border-radius:4px; padding:12px 14px; margin-bottom:16px; }
+  .objective-box .label { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:10px; letter-spacing:1.5px; color:#7C7C82; text-transform:uppercase; margin-bottom:5px; }
+  .objective-box .text { font-size:13px; color:#E8E8E6; line-height:1.5; }
+
+  .health-row { margin-bottom:18px; }
+  .health-row .top { display:flex; justify-content:space-between; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:11px; letter-spacing:1px; color:#9C9C9E; text-transform:uppercase; margin-bottom:6px; }
+  .health-row .top .pct { color:#C6FF3D; }
+  .bar-fill.player { width:72%; height:100%; background:#C6FF3D; }
+
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+  .chip { border:1px solid #3a3a35; background:transparent; color:#C6FF3D; font-family:'Inter',sans-serif; font-size:12px; padding:8px 14px; border-radius:18px; cursor:pointer; transition: background 0.15s; }
+  .chip:hover { background:rgba(198,255,61,0.08); }
+  .chip:disabled { opacity:0.35; cursor:not-allowed; }
+
+  .log { display:flex; flex-direction:column; gap:10px; margin-bottom:16px; }
+  .msg-user { background:rgba(10,10,12,0.6); border:1px solid #26261F; border-radius:6px; padding:10px 14px; font-size:13px; color:#E8E8E6; align-self:flex-end; max-width:88%; }
+  .msg-ai { background:#0E0E10; border:1px solid #26261F; border-left:3px solid #C6FF3D; border-radius:6px; padding:12px 14px; font-size:13px; color:#E8E8E6; line-height:1.5; }
+  .msg-ai .tag { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:10px; letter-spacing:1px; color:#C6FF3D; text-transform:uppercase; margin-bottom:6px; display:block; }
+  .typing { display:flex; gap:4px; padding:6px 0; }
+  .typing span { width:6px; height:6px; border-radius:50%; background:#C6FF3D; animation: tdot 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay:0.2s; }
+  .typing span:nth-child(3) { animation-delay:0.4s; }
+  @keyframes tdot { 0%,60%,100%{opacity:0.25; transform:translateY(0);} 30%{opacity:1; transform:translateY(-3px);} }
+
+  .input-row { display:flex; gap:8px; align-items:center; }
+  .text-input { flex:1; background:#0E0E10; border:1px solid #26261F; border-radius:20px; padding:11px 16px; color:#E8E8E6; font-size:13px; outline:none; }
+  .text-input::placeholder { color:#7C7C82; }
+  .text-input:disabled { opacity:0.4; }
+  .send-btn, .mic-btn { width:40px; height:40px; border-radius:50%; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; }
+  .send-btn { background:#1c1c1f; border:1px solid #26261F; color:#C6FF3D; }
+  .mic-btn { background:#C6FF3D; color:#0A0A0C; }
+  .mic-btn.listening { background:#ff5555; animation: micpulse 1s infinite; }
+  .mic-btn:disabled { opacity:0.35; cursor:not-allowed; }
+  @keyframes micpulse { 0%,100%{ box-shadow:0 0 0 0 rgba(255,85,85,0.5);} 50%{ box-shadow:0 0 0 10px rgba(255,85,85,0);} }
+  .mic-note { font-size:11px; color:#7C7C82; margin-top:8px; text-align:center; }
+
+  /* full-screen listening overlay */
+  .listen-overlay { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(5,5,6,0.85); display:none; align-items:center; justify-content:center; flex-direction:column; z-index:20; }
+  .listen-overlay.active { display:flex; }
+  .mic-ring { width:150px; height:150px; border-radius:50%; border:2px solid rgba(198,255,61,0.35); display:flex; align-items:center; justify-content:center; animation: ringpulse 1.6s infinite ease-in-out; }
+  @keyframes ringpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(198,255,61,0.25);} 50% { box-shadow: 0 0 0 20px rgba(198,255,61,0);} }
+  .mic-circle-big { width:110px; height:110px; border-radius:50%; background: radial-gradient(circle at 35% 30%, #d4ff7a, #C6FF3D 60%, #9fd82f 100%); display:flex; align-items:center; justify-content:center; }
+  .listen-text { margin-top:28px; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; color:#E8E8E6; text-align:center; padding:0 20px; }
+  .listen-sub { margin-top:10px; font-size:13px; color:#7C7C82; }
+
+  /* ---------- Victory overlay ---------- */
+  .victory-overlay { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(5,6,4,0.55); display:none; align-items:center; justify-content:center; flex-direction:column; z-index:30; text-align:center; }
+  .victory-overlay.active { display:flex; }
+  .victory-card { background:rgba(10,10,12,0.92); border:1px solid #3a4d1f; border-radius:12px; padding:44px 56px; }
+  .victory-tag { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:13px; letter-spacing:2px; color:#C6FF3D; text-transform:uppercase; margin-bottom:10px; }
+  .victory-title { font-family:'Rajdhani',sans-serif; font-weight:700; font-size:44px; color:#E8E8E6; margin-bottom:14px; }
+  .victory-sub { font-size:14px; color:#9C9C9E; margin-bottom:24px; }
+  .victory-rewards { display:flex; gap:12px; justify-content:center; margin-bottom:26px; }
+  .reward-chip { background:#131316; border:1px solid #26261F; border-radius:6px; padding:12px 18px; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:13px; color:#C6FF3D; }
+  .victory-btn { background:#C6FF3D; color:#0A0A0C; border:none; padding:13px 32px; border-radius:6px; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:14px; letter-spacing:0.5px; text-transform:uppercase; cursor:pointer; }
+
+  /* particle confetti */
+  .particle { position:absolute; width:6px; height:6px; background:#C6FF3D; top:-10px; border-radius:1px; animation: fall linear forwards; }
+  @keyframes fall { to { transform: translateY(110vh) rotate(360deg); opacity:0; } }
+</style>
+</head>
+<body>
+
+<div class="boss-layer">
+  <img class="boss-img active" id="bossImgIdle" src="images/boss-idle.jpg" alt="Forest Guardian, healthy state">
+  <img class="boss-img" id="bossImgDamaged" src="images/boss-damaged.jpg" alt="Forest Guardian, damaged state">
+  <img class="boss-img" id="bossImgDefeated" src="images/boss-defeated.jpg" alt="Forest Guardian, defeated state">
+  <div class="scrim"></div>
+  <div class="vignette"></div>
+  <div class="flash" id="flash"></div>
+</div>
+
+<div class="topbar">
+  <div class="location"><span class="dot"></span><span class="name">Eldergrove: Nightfall Keep</span></div>
+  <div class="status"><span class="pulse"></span>GameGuide AI Ready</div>
+</div>
+
+<div class="boss-panel">
+  <div class="label">Boss Encounter</div>
+  <div class="name">Forest Guardian</div>
+  <span class="state-tag idle" id="stateTag">Awakened</span>
+  <div class="bar-bg"><div class="bar-fill boss" id="bossHealth"></div></div>
+</div>
+
+<div class="assist-panel">
+  <div class="assist-header">
+    <div class="assist-icon">G</div>
+    <div class="assist-title">
+      <div class="brand">GameGuide AI</div>
+      <div class="headline">Need help right now?</div>
+    </div>
+  </div>
+
+  <div class="objective-box">
+    <div class="label">Current Objective</div>
+    <div class="text" id="objectiveText">Break the Forest Guardian's armor before the poison mist closes in.</div>
+  </div>
+
+  <div class="health-row">
+    <div class="top"><span>Player Health</span><span class="pct">72%</span></div>
+    <div class="bar-bg"><div class="bar-fill player"></div></div>
+  </div>
+
+  <div class="chips" id="chipRow">
+    <button class="chip" data-q="What is it weak to?">What is it weak to?</button>
+    <button class="chip" data-q="When should I dodge?">When should I dodge?</button>
+    <button class="chip" data-q="Best loadout?">Best loadout?</button>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <div class="input-row">
+    <input type="text" class="text-input" id="textInput" placeholder="Ask GameGuide AI anything...">
+    <button class="send-btn" id="sendBtn" title="Send">➤</button>
+    <button class="mic-btn" id="micBtn" title="Ask by voice">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0A0A0C" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="12" rx="3"/>
+        <path d="M5 10v1a7 7 0 0 0 14 0v-1"/>
+        <line x1="12" y1="18" x2="12" y2="22"/>
+      </svg>
+    </button>
+  </div>
+  <div class="mic-note" id="micNote">Tap the mic and ask a question out loud</div>
+</div>
+
+<div class="listen-overlay" id="listenOverlay">
+  <div class="mic-ring">
+    <div class="mic-circle-big">
+      <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#0A0A0C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="12" rx="3"/>
+        <path d="M5 10v1a7 7 0 0 0 14 0v-1"/>
+        <line x1="12" y1="18" x2="12" y2="22"/>
+      </svg>
+    </div>
+  </div>
+  <div class="listen-text" id="listenText">Listening…</div>
+  <div class="listen-sub">Tap anywhere to cancel</div>
+</div>
+
+<div class="victory-overlay" id="victoryOverlay">
+  <div class="victory-card">
+    <div class="victory-tag">Boss Defeated</div>
+    <div class="victory-title">Forest Guardian Fallen</div>
+    <div class="victory-sub">GameGuide AI helped you exploit its fire weakness and time your dodges perfectly.</div>
+    <div class="victory-rewards">
+      <div class="reward-chip">◆ Guardian Core</div>
+      <div class="reward-chip">🏆 Thorn Crown Trophy</div>
+      <div class="reward-chip">+2,500 XP</div>
+    </div>
+    <button class="victory-btn" id="resetBtn">Continue Playing</button>
+  </div>
+</div>
+
+<script>
+  const log = document.getElementById('log');
+  const textInput = document.getElementById('textInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const micBtn = document.getElementById('micBtn');
+  const micNote = document.getElementById('micNote');
+  const listenOverlay = document.getElementById('listenOverlay');
+  const listenText = document.getElementById('listenText');
+  const bossHealth = document.getElementById('bossHealth');
+  const stateTag = document.getElementById('stateTag');
+  const flash = document.getElementById('flash');
+  const victoryOverlay = document.getElementById('victoryOverlay');
+  const chipRow = document.getElementById('chipRow');
+  const objectiveText = document.getElementById('objectiveText');
+
+  const imgIdle = document.getElementById('bossImgIdle');
+  const imgDamaged = document.getElementById('bossImgDamaged');
+  const imgDefeated = document.getElementById('bossImgDefeated');
+
+  let bossPct = 100;
+  let defeated = false;
+
+  // ---- boss visual state machine ----
+  function updateBossVisual() {
+    [imgIdle, imgDamaged, imgDefeated].forEach(img => img.classList.remove('active'));
+    if (bossPct <= 0) {
+      imgDefeated.classList.add('active');
+      stateTag.textContent = 'Defeated';
+      stateTag.className = 'state-tag defeated';
+    } else if (bossPct <= 55) {
+      imgDamaged.classList.add('active');
+      stateTag.textContent = 'Critical — Weak Point Exposed';
+      stateTag.className = 'state-tag damaged';
+    } else {
+      imgIdle.classList.add('active');
+      stateTag.textContent = 'Awakened';
+      stateTag.className = 'state-tag idle';
+    }
+    bossHealth.style.width = Math.max(bossPct, 0) + '%';
+  }
+
+  function damageBoss(amount) {
+    if (defeated) return;
+    bossPct = Math.max(bossPct - amount, 0);
+    flash.classList.add('hit');
+    setTimeout(() => flash.classList.remove('hit'), 90);
+    updateBossVisual();
+    if (bossPct <= 0) triggerVictory();
+  }
+
+  function triggerVictory() {
+    defeated = true;
+    setTimeout(() => {
+      victoryOverlay.classList.add('active');
+      spawnConfetti();
+    }, 900);
+    micBtn.disabled = true;
+    textInput.disabled = true;
+    sendBtn.disabled = true;
+    chipRow.querySelectorAll('.chip').forEach(c => c.disabled = true);
+  }
+
+  function spawnConfetti() {
+    const colors = ['#C6FF3D', '#9fd82f', '#E8E8E6'];
+    for (let i = 0; i < 60; i++) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      p.style.left = Math.random() * 100 + 'vw';
+      p.style.background = colors[Math.floor(Math.random() * colors.length)];
+      p.style.animationDuration = (2 + Math.random() * 2) + 's';
+      p.style.opacity = 0.7 + Math.random() * 0.3;
+      document.body.appendChild(p);
+      setTimeout(() => p.remove(), 4200);
+    }
+  }
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    bossPct = 100; defeated = false;
+    victoryOverlay.classList.remove('active');
+    micBtn.disabled = false; textInput.disabled = false; sendBtn.disabled = false;
+    chipRow.querySelectorAll('.chip').forEach(c => c.disabled = false);
+    log.innerHTML = '';
+    objectiveText.textContent = "Break the Forest Guardian's armor before the poison mist closes in.";
+    updateBossVisual();
+  });
+
+  // ---- response engine ----
+  const RESPONSES = [
+    { keys: ['weak', 'weakness', 'element'], text: 'The Forest Guardian is weak to fire damage. Use fire resin, ember arrows, or pyromancy right after its ground slam.' },
+    { keys: ['dodge', 'avoid', 'timing'], text: 'The safest dodge window is right after both fists hit the ground — roll through the slam recovery for about 2.4 seconds of free damage.' },
+    { keys: ['loadout', 'equip', 'gear', 'weapon'], text: 'Your Emberblade and Poison Ward mantle are already in your inventory — swap them in before entering phase two.' },
+    { keys: ['beat', 'strategy', 'how do i'], text: 'Stay close, roll through its swings, and punish after the ground slam. Fire damage breaks its armor phase fastest — bring ember arrows if you have them.' },
+    { keys: ['reward', 'drop', 'loot'], text: 'Defeating the Forest Guardian drops the Guardian Core and unlocks the Thorn Crown trophy.' },
+  ];
+  const FALLBACK = "I didn't catch a match for that — try asking about its weakness, dodge timing, loadout, or overall strategy.";
+
+  function matchResponse(query) {
+    const q = query.toLowerCase();
+    for (const r of RESPONSES) {
+      if (r.keys.some(k => q.includes(k))) return r.text;
+    }
+    return FALLBACK;
+  }
+
+  function addUserMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'msg-user';
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function addAiTyping() {
+    const div = document.createElement('div');
+    div.className = 'msg-ai';
+    div.innerHTML = '<span class="tag">GameGuide AI</span><div class="typing"><span></span><span></span><span></span></div>';
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function respondTo(query) {
+    if (defeated) return;
+    addUserMessage(query);
+    const typingEl = addAiTyping();
+    setTimeout(() => {
+      typingEl.innerHTML = '<span class="tag">GameGuide AI</span>' + matchResponse(query);
+      log.scrollTop = log.scrollHeight;
+      if (bossPct > 55) {
+        objectiveText.textContent = "Exploit the fire weakness — the armor phase is cracking.";
+      } else if (bossPct > 0) {
+        objectiveText.textContent = "One more solid combo after its next ground slam should finish it.";
+      }
+      damageBoss(18 + Math.random() * 10);
+    }, 700);
+  }
+
+  chipRow.addEventListener('click', (e) => {
+    if (e.target.classList.contains('chip') && !e.target.disabled) {
+      respondTo(e.target.dataset.q);
+    }
+  });
+
+  sendBtn.addEventListener('click', () => {
+    const val = textInput.value.trim();
+    if (val && !defeated) { respondTo(val); textInput.value = ''; }
+  });
+  textInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendBtn.click();
+  });
+
+  // ---- Web Speech API voice recognition ----
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  let listening = false;
+
+  if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+      listening = true;
+      micBtn.classList.add('listening');
+      listenOverlay.classList.add('active');
+      listenText.textContent = 'Listening…';
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results).map(r => r[0].transcript).join('');
+      listenText.textContent = '"' + transcript + '"';
+      if (event.results[0].isFinal) {
+        setTimeout(() => {
+          listenOverlay.classList.remove('active');
+          respondTo(transcript);
+        }, 350);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      listenOverlay.classList.remove('active');
+      micBtn.classList.remove('listening');
+      listening = false;
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        micNote.textContent = 'Microphone access denied — check browser permissions.';
+      } else {
+        micNote.textContent = "Didn't catch that — try again or type your question.";
+      }
+    };
+
+    recognition.onend = () => {
+      listening = false;
+      micBtn.classList.remove('listening');
+      listenOverlay.classList.remove('active');
+    };
+
+    micBtn.addEventListener('click', () => {
+      if (!listening && !defeated) {
+        try { recognition.start(); } catch (e) { /* already started */ }
+      }
+    });
+
+    listenOverlay.addEventListener('click', () => {
+      if (listening) recognition.stop();
+    });
+  } else {
+    micNote.textContent = "Voice input isn't supported in this browser — try Chrome, or type your question instead.";
+    micBtn.style.opacity = '0.4';
+    micBtn.style.cursor = 'not-allowed';
+  }
+
+  updateBossVisual();
+</script>
+
+</body>
+</html>
